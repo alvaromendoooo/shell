@@ -1,0 +1,2 @@
+SET WORD abcdef
+EXPAND len=${#WORD}

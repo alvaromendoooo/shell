@@ -1,0 +1,8 @@
+SET NAME alice
+SET HOME /home/alice
+EXPAND hello $NAME!
+EXPAND ${NAME} lives in ${HOME}
+EXPAND user=${USER:-anon}
+EXPAND name length is ${#NAME}
+UNSET NAME
+EXPAND hello $NAME!

@@ -1,0 +1,4 @@
+
+cd /tmp
+pwd
+echo $PWD

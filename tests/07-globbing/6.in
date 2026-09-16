@@ -1,0 +1,4 @@
+FILE apple
+FILE banana
+FILE cherry
+MATCH [ab]*

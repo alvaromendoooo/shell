@@ -1,0 +1,3 @@
+argv=['ls']
+redir fd=2 op=> target=err.txt
+redir fd=1 op=> target=out.txt

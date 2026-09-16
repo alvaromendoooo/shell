@@ -1,0 +1,2 @@
+cd /foo/./bar/../baz
+pwd

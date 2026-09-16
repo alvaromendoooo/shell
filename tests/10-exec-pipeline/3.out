@@ -1,0 +1,8 @@
+CMD 0 a
+  DUP2 11 1
+  CLOSE 10
+  CLOSE 11
+CMD 1 b
+  DUP2 10 0
+  CLOSE 10
+  CLOSE 11

@@ -1,0 +1,12 @@
+RAN echo hello
+RAN ls -la
+RAN ls -la
+RAN echo hello
+RAN ls -la
+1: echo hello
+2: ls -la
+3: ls -la
+4: echo hello
+5: ls -la
+bash: !99: event not found
+RAN echo done

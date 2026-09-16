@@ -1,0 +1,4 @@
+argv=['cat']
+redir fd=0 op=< target=in.txt
+redir fd=1 op=> target=out.txt
+redir fd=2 op=> target=&1

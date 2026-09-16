@@ -1,0 +1,9 @@
+state=prompt fg=0
+started 100
+forwarded SIGINT to 100
+done 100
+(no foreground job)
+started 200
+stopped 200
+state=stopped fg=200
+shell exiting

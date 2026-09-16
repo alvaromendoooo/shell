@@ -1,0 +1,4 @@
+FORK 0 1
+FORK 1 2
+EXEC 2 grep
+STATUS 2

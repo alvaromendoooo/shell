@@ -1,0 +1,4 @@
+FILE one.log
+FILE two.log
+FILE three.log
+MATCH [!t]*

@@ -1,0 +1,1 @@
+echo hello >> log.txt

@@ -1,0 +1,11 @@
+FILE main.py
+FILE build.py
+FILE README.md
+FILE .git
+FILE data.txt
+MATCH *.py
+MATCH *.md
+MATCH ?ata.txt
+MATCH [bm]*.py
+MATCH .*
+MATCH *.xml

@@ -1,0 +1,2 @@
+SET X foo
+EXPAND $(echo $(upper $X))

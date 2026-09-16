@@ -1,0 +1,3 @@
+argv=['sort']
+redir fd=0 op=< target=data.txt
+redir fd=1 op=>> target=sorted.txt

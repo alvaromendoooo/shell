@@ -1,0 +1,3 @@
+OPEN in.txt RDONLY -> fd 100
+DUP2 100 0
+CLOSE 100

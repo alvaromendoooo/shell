@@ -1,0 +1,3 @@
+FILE a.py
+FILE b.py
+MATCH *.py

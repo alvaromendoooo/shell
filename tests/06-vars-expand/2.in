@@ -1,0 +1,2 @@
+SET X hi
+EXPAND $X

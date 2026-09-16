@@ -1,0 +1,9 @@
+FILE main.py
+FILE build.py
+FILE README.md
+
+set NAME=alice
+echo $NAME
+cd /tmp
+pwd
+ls *.py | grep py > out.txt

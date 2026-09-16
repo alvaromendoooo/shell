@@ -1,0 +1,6 @@
+cd /one
+cd /two
+cd -
+pwd
+cd -
+pwd

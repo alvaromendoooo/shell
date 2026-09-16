@@ -1,0 +1,74 @@
+{
+  "course": "build-shell",
+  "language": "rust",
+  "language_id": 73,
+  "entrypoint": "main.rs",
+  "version": 1,
+  "content_hash": "6b83376e610d948c",
+  "lessons": [
+    {
+      "slug": "tokenize",
+      "tests_hash": "c971522417bf"
+    },
+    {
+      "slug": "pipelines",
+      "tests_hash": "33be7be46c91"
+    },
+    {
+      "slug": "redirects",
+      "tests_hash": "d3b5f6c9cf53"
+    },
+    {
+      "slug": "heredocs",
+      "tests_hash": "c31ea4df67f1"
+    },
+    {
+      "slug": "builtin-cd",
+      "tests_hash": "8a93ba3b1681"
+    },
+    {
+      "slug": "vars-expand",
+      "tests_hash": "406e0022d68e"
+    },
+    {
+      "slug": "globbing",
+      "tests_hash": "15a2ca18103f"
+    },
+    {
+      "slug": "command-substitution",
+      "tests_hash": "39a99f639522"
+    },
+    {
+      "slug": "fork-exec",
+      "tests_hash": "17f0736e400f"
+    },
+    {
+      "slug": "exec-pipeline",
+      "tests_hash": "8585149faf5f"
+    },
+    {
+      "slug": "exec-redirects",
+      "tests_hash": "7909c50e7d60"
+    },
+    {
+      "slug": "logical-operators",
+      "tests_hash": "c873add2d118"
+    },
+    {
+      "slug": "signals",
+      "tests_hash": "bea211deaf14"
+    },
+    {
+      "slug": "history",
+      "tests_hash": "ce515f1adeab"
+    },
+    {
+      "slug": "full-shell",
+      "tests_hash": "866ba6c55228"
+    },
+    {
+      "slug": "job-control",
+      "tests_hash": "7f1e5be4bbac"
+    }
+  ]
+}

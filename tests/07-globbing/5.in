@@ -1,0 +1,4 @@
+FILE foo
+FILE bar
+FILE baz
+MATCH ba?

@@ -1,0 +1,2 @@
+argv=['cmd']
+redir fd=1 op=> target=out.log

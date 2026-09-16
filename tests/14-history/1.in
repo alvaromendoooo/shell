@@ -1,0 +1,8 @@
+echo hello
+ls -la
+!!
+!1
+!ls
+:hist
+!99
+echo done

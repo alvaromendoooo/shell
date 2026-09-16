@@ -1,0 +1,3 @@
+started 42
+stopped 42
+state=stopped fg=42

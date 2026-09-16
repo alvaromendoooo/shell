@@ -1,0 +1,3 @@
+FORK 0 50
+EXEC 50 cat
+STATUS 50

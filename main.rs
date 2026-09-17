@@ -1,4 +1,18 @@
-use std::{io::{self, BufRead}, thread::current};
+use std::{io::{self, BufRead}};
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Redirection {
+    pub fd: i32,
+    pub operand: String,
+    pub target: String,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Command {
+    pub argv: Vec<String>,
+    pub redirections: Vec<Redirection>,
+}
+
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut tokens = Vec::new();
@@ -7,13 +21,12 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut in_single_quotes = false;
     let mut in_double_quotes = false;
     let mut is_escaped = false;
-
-    // Track if we are currently buildig a true token
     let mut active_token = false;
 
-    for c in input.chars() {
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
         if is_escaped {
-            // Backslashes escapes the next character
             current_token.push(c);
             active_token = true;
             is_escaped = false;
@@ -28,21 +41,55 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
             }
         } else if in_double_quotes {
             match c {
-                '"'  => in_double_quotes = false,
+                '"' => in_double_quotes = false,
                 '\\' => is_escaped = true,
-                _    => current_token.push(c),
+                _ => current_token.push(c),
             }
         } else {
             // Outside quotes
             match c {
-                '\\' => { 
-                    is_escaped = true; active_token = true; 
+                '\\' => {
+                    is_escaped = true;
+                    active_token = true;
                 }
-                '\'' => { 
-                    in_single_quotes = true; active_token = true; 
+                '\'' => {
+                    in_single_quotes = true;
+                    active_token = true;
                 }
-                '"'  => { 
-                    in_double_quotes = true; active_token = true; 
+                '"' => {
+                    in_double_quotes = true;
+                    active_token = true;
+                }
+                '<' | '>' => {
+                    if active_token {
+                        tokens.push(std::mem::take(&mut current_token));
+                        active_token = false;
+                    }
+
+                    let mut op = c.to_string();
+
+                    // Check for double operators '>>' or '<<'
+                    if chars.peek() == Some(&c) {
+                        op.push(chars.next().unwrap());
+                    }
+                    // Checks for '>&1' or '>&2'
+                    else if chars.peek() == Some(&'&') {
+                        op.push(chars.next().unwrap()); // Consumes '&'
+                        if let Some(&next_c) = chars.peek() {
+                            if next_c.is_ascii_digit() {
+                                op.push(chars.next().unwrap()); // Consumes digit
+                            }
+                        }
+                    }
+
+                    tokens.push(op); 
+                }
+                '|' => {
+                    if active_token {
+                        tokens.push(std::mem::take(&mut current_token));
+                        active_token = false;
+                    }
+                    tokens.push("|".to_string());
                 }
                 _ if c.is_whitespace() => {
                     if active_token {
@@ -50,18 +97,36 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
                         active_token = false;
                     }
                 }
-                _ => {
-                    current_token.push(c); active_token = true;
-                    if c == '|' {
-                        tokens.push(std::mem::take(&mut current_token));
-                        active_token = false;
+                // Handle digits attached directly to redirection operators (e.g., '2' in '2>err.txt')
+                '0'..='9'
+                    if current_token.is_empty()
+                        && matches!(chars.peek(), Some(&'<') | Some(&'>')) =>
+                {
+                    let mut op = c.to_string(); // starts with "2" or "1"
+                    op.push(chars.next().unwrap()); // consume '<' or '>'
+
+                    if chars.peek() == Some(&'>') {
+                        op.push(chars.next().unwrap()); // 2>>
+                    } else if chars.peek() == Some(&'&') {
+                        op.push(chars.next().unwrap()); // 2>&
+                        if let Some(&next_c) = chars.peek() {
+                            if next_c.is_ascii_digit() {
+                                op.push(chars.next().unwrap()); // 2>&1
+                            }
+                        }
                     }
+
+                    tokens.push(op);
+                    active_token = false;
+                }
+                _ => {
+                    current_token.push(c);
+                    active_token = true;
                 }
             }
         }
     }
 
-    // Error control
     if is_escaped {
         return Err("ERR trailing Backslashes");
     }
@@ -70,15 +135,13 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
         return Err("ERR unterminated quote");
     }
 
-    // Push final token if we where building one
     if active_token {
         tokens.push(current_token);
     }
 
     Ok(tokens)
 }
-
-pub fn parse(tokens: &[String]) -> Result<Vec<Vec<String>>, &'static str> {
+pub fn parse_pipelines(tokens: &[String]) -> Result<Vec<Vec<String>>, &'static str> {
     let mut list_of_command_pipeline: Vec<Vec<String>> = Vec::new();
     let mut current_command: Vec<String> = Vec::new();
 
@@ -107,10 +170,65 @@ pub fn parse(tokens: &[String]) -> Result<Vec<Vec<String>>, &'static str> {
     Ok(list_of_command_pipeline)
 }
 
+pub fn parse_redirections(tokens: &[String]) -> Result<Command, &'static str> {
+    let mut argv: Vec<String> = Vec::new();
+    let mut redirections: Vec<Redirection> = Vec::new();
+    let mut iter = tokens.iter().peekable(); // Iterator which let
+    // you look to next elements without passing to them
+
+    while let Some(token) = iter.next() {
+        // Check if current token is a redirection
+        if is_redirection_token(token) {
+            let (fd, operand, target) = if token == "2>&1" { // Dedicated cases
+                // - treatment apart
+                (2, ">".to_string(), "&1".to_string())
+            } else if token == "1>&2" {
+                (1, ">".to_string(), "&2".to_string())
+            } else {
+                let (fd, operand) = parse_fd_with_op(token);
+                let target = match iter.next() {
+                    Some(t) => t.clone(),
+                    None => return Err("ERR missing redirect target"),
+                };
+                (fd, operand, target)
+            };
+
+            redirections.push(Redirection { fd, operand, target });
+        } else {
+            argv.push(format!("'{}'", token.clone()));
+        }
+    }
+
+    Ok( Command { argv, redirections })
+}
+
+// Helper to identify if last token is |
 pub fn token_ended_with_pipe(tokens: &[String]) -> bool {
     tokens.last().map_or(false, |t| t == "|")
 }
 
+// Helper to idnetify redirection tokens
+pub fn is_redirection_token(token: &str) -> bool {
+    matches!(
+        token,
+        "<" | "<<" | ">" | ">>" | "2>" | "2>>" | "2>&1" | "1>&2" | "&>" | "1>"
+    )
+}
+
+// Helper to match redirect operand with fd
+pub fn parse_fd_with_op(token: &str) -> (i32, String) {
+    match token {
+        "<"    => (0, "<".to_string()),
+        "<<"   => (0, "<<".to_string()),
+        ">"    => (1, ">".to_string()),
+        ">>"   => (1, ">>".to_string()),
+        "1>"   => (1, ">".to_string()),
+        "2>"   => (2, ">".to_string()),
+        "2>>"  => (2, "2>>".to_string()),
+        "2>&1" => (2, ">".to_string()),
+        _      => (2, token.to_string()),
+    }
+}
 
 fn main() {
     let stdin = io::stdin();
@@ -129,9 +247,10 @@ fn main() {
 
                 println!("{}", formatted_output.join(" "));*/
 
-                let pipeline_commands = parse(&tok);
+                // PARSER PIPELINES
+                //let pipeline_commands = parse_pipelines(&tok);
 
-                match pipeline_commands {
+                /*match pipeline_commands {
                     Ok(list_commands) => {
                         let formatted_pipeline = list_commands
                             .into_iter()
@@ -139,6 +258,27 @@ fn main() {
                             .collect::<Vec<String>>()
                             .join(" | ");
                         println!("{}", formatted_pipeline);
+                    },
+                    Err(e) => println!("{}", e),
+                }*/
+
+                let redirection_commands = parse_redirections(&tok);
+
+                match redirection_commands {
+                    Ok(command) => {
+                        let argv_formatted = format!("[{}]", command.argv.join(", "));
+
+                        println!("argv={}", argv_formatted);
+
+                        for redir in command.redirections {
+                            let formatted_redir = format!("redir fd={} op={} target={}", 
+                                redir.fd, 
+                                redir.operand, 
+                                redir.target
+                            );
+
+                            println!("{}", formatted_redir);
+                        }
                     },
                     Err(e) => println!("{}", e),
                 }

@@ -1,4 +1,4 @@
-use std::io::{self, BufRead};
+use std::{io::{self, BufRead}, thread::current};
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut tokens = Vec::new();
@@ -50,8 +50,12 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
                         active_token = false;
                     }
                 }
-                _ => { 
-                    current_token.push(c); active_token = true; 
+                _ => {
+                    current_token.push(c); active_token = true;
+                    if c == '|' {
+                        tokens.push(std::mem::take(&mut current_token));
+                        active_token = false;
+                    }
                 }
             }
         }
@@ -74,6 +78,38 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     Ok(tokens)
 }
 
+pub fn parse(tokens: &[String]) -> Result<Vec<Vec<String>>, &'static str> {
+    let mut list_of_command_pipeline: Vec<Vec<String>> = Vec::new();
+    let mut current_command: Vec<String> = Vec::new();
+
+    for token in tokens { // Iterates through detected tokens
+        if token == "|" {
+            if current_command.is_empty() { // Check if there was no command before | token
+                return Err("ERR syntax error: empty command in pipeline");
+            }
+            list_of_command_pipeline.push(std::mem::take(&mut current_command)); // push
+            // command into list of lists and clears current_command
+        } else {
+            current_command.push(token.clone()); // get the current command 
+        }
+    }
+
+    if token_ended_with_pipe(tokens) && current_command.is_empty() { // Checks if there is no
+        // command after | token.
+        return Err("ERR syntax error: empty command in pipeline");
+    }
+
+    if !current_command.is_empty() { // If there was a command after |, pushes as a valid command
+        // into list of lists
+        list_of_command_pipeline.push(current_command);
+    }
+
+    Ok(list_of_command_pipeline)
+}
+
+pub fn token_ended_with_pipe(tokens: &[String]) -> bool {
+    tokens.last().map_or(false, |t| t == "|")
+}
 
 
 fn main() {
@@ -86,12 +122,26 @@ fn main() {
         
         match tokens {
             Ok(tok) => {
-                let formatted_output: Vec<String> = tok
+                /*let formatted_output: Vec<String> = tok
                     .into_iter()
                     .map(|t| format!("[{}]", t))
                     .collect();
 
-                println!("{}", formatted_output.join(" "));
+                println!("{}", formatted_output.join(" "));*/
+
+                let pipeline_commands = parse(&tok);
+
+                match pipeline_commands {
+                    Ok(list_commands) => {
+                        let formatted_pipeline = list_commands
+                            .into_iter()
+                            .map(|p| p.join(" "))
+                            .collect::<Vec<String>>()
+                            .join(" | ");
+                        println!("{}", formatted_pipeline);
+                    },
+                    Err(e) => println!("{}", e),
+                }
             },
             Err(e) => println!("{}", e),
         }

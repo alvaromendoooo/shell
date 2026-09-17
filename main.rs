@@ -100,7 +100,10 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
                 // Handle digits attached directly to redirection operators (e.g., '2' in '2>err.txt')
                 '0'..='9'
                     if current_token.is_empty()
-                        && matches!(chars.peek(), Some(&'<') | Some(&'>')) =>
+                        && match chars.peek() { 
+                            Some(&'<') | Some(&'>') => true,
+                            _ => false,
+                } =>
                 {
                     let mut op = c.to_string(); // starts with "2" or "1"
                     op.push(chars.next().unwrap()); // consume '<' or '>'
@@ -209,10 +212,19 @@ pub fn token_ended_with_pipe(tokens: &[String]) -> bool {
 
 // Helper to idnetify redirection tokens
 pub fn is_redirection_token(token: &str) -> bool {
-    matches!(
-        token,
-        "<" | "<<" | ">" | ">>" | "2>" | "2>>" | "2>&1" | "1>&2" | "&>" | "1>"
-    )
+    match token {
+        "<" => true,
+        "<<" => true,
+        ">" => true,
+        ">>" => true,
+        "2>" => true,
+        "2>>" => true,
+        "2>&1" => true,
+        "1>&2" => true,
+        "&>" => true,
+        "1>" => true,
+        _ => false,
+}
 }
 
 // Helper to match redirect operand with fd

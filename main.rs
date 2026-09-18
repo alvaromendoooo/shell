@@ -13,6 +13,11 @@ pub struct Command {
     pub redirections: Vec<Redirection>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct HereDocuments {
+    pub command: String,
+    pub body: Option<String>,
+}
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut tokens = Vec::new();
@@ -71,6 +76,10 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
                     // Check for double operators '>>' or '<<'
                     if chars.peek() == Some(&c) {
                         op.push(chars.next().unwrap());
+                        // Checks for '-' char after '<<' token discover - improves HereDocuments
+                        if op == "<<" && chars.peek() == Some(&'-') {
+                            op.push(chars.next().unwrap());
+                        }
                     }
                     // Checks for '>&1' or '>&2'
                     else if chars.peek() == Some(&'&') {
@@ -205,6 +214,80 @@ pub fn parse_redirections(tokens: &[String]) -> Result<Command, &'static str> {
     Ok( Command { argv, redirections })
 }
 
+pub fn parse_here_documents(lines: &[String]) -> Result<Vec<HereDocuments>, &'static str> {
+    let mut results = Vec::new();
+    let mut line_iter = lines.iter();
+
+    while let Some(line) = line_iter.next() {
+        let tokens = tokenize(line)?;
+        if tokens.is_empty() {
+            continue;
+        }
+
+        // Check if current line is heredoc command
+        if let Some((op_idx, strip_tabs)) = find_heredoc_operator(&tokens) {
+            let end_token  = match tokens.get(op_idx + 1) {
+                Some(t) => t.clone(),
+                None => return Err("ERR missing heredoc end token"),
+            }; 
+
+            // Now that command of heredoc is computed, we iterate through its body
+            let mut body_lines = Vec::new();
+            let mut find_end = false;
+
+            for body_line in line_iter.by_ref() {
+                let check_line = if strip_tabs {
+                    body_line.trim_start_matches('\t')
+                } else {
+                    body_line
+                };
+
+                if check_line == end_token {
+                    find_end = true;
+                    break;
+                }
+
+                body_lines.push(check_line.to_string());
+            }
+
+            if !find_end {
+                return Err("ERR unterminated heredoc boddy");
+            }
+
+            results.push(HereDocuments {
+                command: line.trim().to_string(),
+                body: {
+                    if !body_lines.is_empty() {
+                        Some(body_lines.join("\n"))
+                    } else {
+                        None
+                    }
+                },
+            });
+
+        } else {
+            results.push(HereDocuments {
+                command: line.trim().to_string(),
+                body: None
+            });
+        }
+    }
+    Ok(results)
+}
+
+// Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
+// be tabbed
+pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
+    for (i, t) in tokens.iter().enumerate() {
+        if t == "<<" {
+            return Some((i, false));
+        } else if t == "<<-" {
+            return Some((i, true));
+        }
+    }
+    None
+}
+
 // Helper to identify if last token is |
 pub fn token_ended_with_pipe(tokens: &[String]) -> bool {
     tokens.last().map_or(false, |t| t == "|")
@@ -224,8 +307,9 @@ pub fn is_redirection_token(token: &str) -> bool {
         "&>" => true,
         "1>" => true,
         _ => false,
+    }
 }
-}
+
 
 // Helper to match redirect operand with fd
 pub fn parse_fd_with_op(token: &str) -> (i32, String) {
@@ -242,22 +326,45 @@ pub fn parse_fd_with_op(token: &str) -> (i32, String) {
     }
 }
 
+
 fn main() {
     let stdin = io::stdin();
-    for line in stdin.lock().lines() {
+
+    let lines: Vec<String> = match stdin.lock().lines().collect() {
+        Ok(l) => l,
+        Err(e) => {
+            eprint!("Error reading stdin: {}", e);
+            return;
+        }
+    };
+
+    match parse_here_documents(&lines) {
+        Ok(here_docs) => {
+            for here_doc in here_docs {
+                println!("CMD {}", here_doc.command);
+                if let Some(body) = here_doc.body {
+                    println!("BODY:\n{}\nEND", body);
+                } else {
+                    println!("BODY:\nEND");
+                }
+            }
+        },
+        Err(e) => eprint!("Error: {}", e),
+    }    
+    /*for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
 
-        let tokens = tokenize(&l);
+        //let tokens = tokenize(&l);
         
-        match tokens {
+        /*match tokens {
             Ok(tok) => {
-                /*let formatted_output: Vec<String> = tok
+                let formatted_output: Vec<String> = tok
                     .into_iter()
                     .map(|t| format!("[{}]", t))
                     .collect();
 
-                println!("{}", formatted_output.join(" "));*/
+                println!("{}", formatted_output.join(" "));
 
                 // PARSER PIPELINES
                 //let pipeline_commands = parse_pipelines(&tok);
@@ -274,7 +381,8 @@ fn main() {
                     Err(e) => println!("{}", e),
                 }*/
 
-                let redirection_commands = parse_redirections(&tok);
+                // PARSE REDIRECTIONS
+                /*let redirection_commands = parse_redirections(&tok);
 
                 match redirection_commands {
                     Ok(command) => {
@@ -293,10 +401,10 @@ fn main() {
                         }
                     },
                     Err(e) => println!("{}", e),
-                }
+                }*/
             },
             Err(e) => println!("{}", e),
-        }
+        }*/
         
-    }
+    }*/
 }

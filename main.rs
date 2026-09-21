@@ -1,4 +1,4 @@
-use std::{io::{self, BufRead}, thread::current};
+use std::{collections::HashMap, env::var, io::{self, BufRead}, thread::current};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {
@@ -23,6 +23,11 @@ pub struct HereDocuments {
 pub struct ShellState {
     pub pwd: String,
     pub oldpwd: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ShellVariable {
+    pub record: HashMap<String, String>,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -328,6 +333,110 @@ impl ShellState {
     }
 }
 
+impl ShellVariable {
+    pub fn new() -> Self {
+        Self {
+            record: HashMap::new(),
+        }
+    }
+
+    pub fn set(&mut self, name: &str, value: &str) {
+        // If key already existis in variables records, delete it - BASE CASE
+        if self.record.contains_key(name) {
+            self.record.remove(name);
+        } else {
+            self.record.insert(name.to_string(), value.to_string());
+        }
+    }
+
+    pub fn unset(&mut self, name: &str) {
+        self.record.remove(name);
+    }
+    
+    // Expands registered shell variables in line param
+    pub fn expand(&mut self, line: &str) -> Result<String, &'static str> {
+        let mut result = String::new();
+        let mut chars = line.chars().peekable();
+
+        while let Some(ch) = chars.next() {
+            if ch == '$' {
+                // Check if '$' is followed by something to expand
+                if let Some(&next_ch) = chars.peek() {
+                    if next_ch == '{' {
+                        chars.next(); // Consumes '{'
+                        let expanded_braces = self.expanded_braces(&mut chars)?;
+                        result.push_str(&expanded_braces);
+                        continue;
+                    } else if next_ch.is_alphanumeric() || next_ch == '_' {
+                        let expanded = self.expand_simple(&mut chars);
+                        result.push_str(&expanded);
+                        continue;
+                    }
+                }
+            }
+            result.push(ch);
+        }
+        // Remove the EXPAND reserved word from the command
+        Ok(result.chars().skip("EXPAND ".len()).collect())
+    }
+
+    fn expanded_braces<I>(&self, chars: &mut std::iter::Peekable<I>) -> Result<String, &'static str>
+    where
+        I: Iterator<Item = char>
+    {
+        let mut expr = String::new();
+        let mut closed = false;
+
+        while let Some(ch) = chars.next() {
+            if ch == '}' {
+                closed = true;
+                break;
+            }
+            expr.push(ch);
+        }
+
+        if !closed {
+            return Err("ERR bad substitution: missing closing '}'");
+        }
+
+        // Case 1: ${#X} length of X - 0 if it's unset
+        if let Some(var_name) = expr.strip_prefix('#') {
+            let val = self.record.get(var_name).map(|v| v.as_str()).unwrap_or("");
+            return Ok(val.len().to_string());
+        }
+
+        // Case 2: ${X:-d} Value of "X" or 'd' if unset/empty
+        if let Some((var_name, default_val)) = expr.split_once(":-") {
+            let val = self.record.get(var_name).map(|v| v.as_str()).unwrap_or("");
+            return if val.is_empty() {
+                Ok(default_val.to_string())
+            } else {
+                Ok(val.to_string())
+            };
+        }
+
+        // Case 3: ${X} - Standard value lookup
+        let val = self.record.get(&expr).map(|v| v.as_str()).unwrap_or("");
+        Ok(val.to_string())
+    }
+
+    fn expand_simple<I>(&self, chars: &mut std::iter::Peekable<I>) -> String
+    where 
+        I: Iterator<Item = char>
+    {
+        let mut var_name = String::new();
+
+        while let Some(&ch) = chars.peek() {
+            if ch.is_alphanumeric() || ch == '_' {
+                var_name.push(chars.next().unwrap());
+            } else {
+                break;
+            }
+        }
+        self.record.get(&var_name).cloned().unwrap_or_default()
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -407,12 +516,14 @@ fn main() {
         },
         Err(e) => eprint!("Error: {}", e),
     }*/
-    let mut state = ShellState::new();
+    //let mut state = ShellState::new();
+    let mut shell_variables=  ShellVariable::new();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
-        
-        let mut command_input = l.split_whitespace(); 
+       
+        // PWD - CD command
+        /*let mut command_input = l.split_whitespace(); 
         let command_name = command_input.next();
         let command_ops = command_input.next();
 
@@ -423,9 +534,21 @@ fn main() {
                 Err(e) => println!("{}", e),
             },
             _ => {}
-        }
+        }*/
         
-        //let tokens = tokenize(&l);
+        let tokens = tokenize(&l).ok();
+        
+        if let Some(token_arr) = tokens {
+            if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
+                if idx + 2 <= token_arr.len() {
+                    shell_variables.set(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
+                }
+            } else if let Some(idx) = token_arr.iter().position(|t| t == "UNSET") {
+                shell_variables.unset(token_arr[idx + 1].as_str());
+            } else {
+                println!("{}", shell_variables.expand(&l).unwrap());
+            }
+        }
         
         /*match tokens {
             Ok(tok) => {

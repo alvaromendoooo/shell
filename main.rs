@@ -1,4 +1,4 @@
-use std::{collections::HashMap, env::var, io::{self, BufRead}, thread::current};
+use std::{collections::{HashMap, HashSet}, env::var, fs::File, io::{self, BufRead}, thread::current};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {
@@ -28,6 +28,11 @@ pub struct ShellState {
 #[derive(Debug)]
 pub struct ShellVariable {
     pub record: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+pub struct FileSystem {
+    pub files: HashSet<String>,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -440,6 +445,130 @@ impl ShellVariable {
     }
 }
 
+impl FileSystem {
+    pub fn new() -> Self {
+        Self {
+            files: HashSet::new(),
+        }
+    }
+
+    pub fn create_file(&mut self, filename: &str) {
+        self.files.insert(filename.to_string());
+    }
+
+    pub fn match_filenames(&self, expression: &str) -> String {
+        let mut matches: Vec<String> = self
+            .files
+            .iter()
+            .filter(|filename| self.is_match(expression, filename))
+            .cloned()
+            .collect();
+        
+        // No file matches with given expression, we print expression
+        if matches.is_empty() {
+            return expression.to_string();
+        }
+
+        matches.sort();
+        matches.join(" ")
+    }
+
+    // Recursive match engine
+    fn is_match(&self, expression: &str, filename: &str) -> bool {
+        // Hidden filenames cannot match wildcard expressions unless expression explicity starts
+        // with '.'
+        if filename.starts_with(".") && !expression.starts_with(".") {
+            return false;
+        }
+
+        self.match_chars(&expression.chars().collect::<Vec<_>>(), &filename.chars().collect::<Vec<_>>())
+    }
+
+    fn match_chars(&self, pat: &[char], text: &[char]) -> bool {
+        match (pat.first(), text.first()) {
+            // Both empty -> match
+            (None, None) => true,
+
+            // Patter empty, text remeaning -> fail
+            (None, Some(_)) => false,
+
+            // Patter starts with "*"
+            (Some(&'*'), _) => {
+                self.match_chars(&pat[1..], text)
+                    || (!text.is_empty() && text[0] != '/' && self.match_chars(pat, &text[1..]))
+            }
+
+            // Text expty but patter remains (and isnt *) -> fails
+            (_, None) => false,
+
+            // Patter starts with "?"
+            (Some(&'?'), Some(&t_ch)) => {
+                if t_ch == '/' { // No directory detection
+                    false
+                } else {
+                    self.match_chars(&pat[1..], &text[1..])
+                }
+            }
+
+            (Some(&'['), Some(&t_ch)) => {
+                if let Some(close_idx) = pat.iter().position(|&c| c == ']') {
+                    let class_pat = &pat[1..close_idx];
+                    if self.match_char_class(class_pat, t_ch) {
+                        self.match_chars(&pat[close_idx + 1..], &text[1..])
+                    } else {
+                        false
+                    }
+                } else {
+                    // Malformed class without ']', treat as literal '['
+                    pat[0] == t_ch && self.match_chars(&pat[1..], &text[1..])
+                }
+            } 
+
+            // Literal Character match
+            (Some(&p_ch), Some(&t_ch)) => {
+                p_ch == t_ch && self.match_chars(&pat[1..], &text[1..])
+            }
+        }
+    }
+
+    // Helper for [abc], [!abc], and [a-z]
+    fn match_char_class(&self, class_spec: &[char], ch: char) -> bool {
+        if class_spec.is_empty() {
+            return false;
+        }
+
+        let (negated, spec) = if class_spec[0] == '!' {
+            (true, &class_spec[1..])
+        } else {
+            (false, class_spec)
+        };
+
+        let mut matched = false;
+        let mut i = 0;
+
+        while i < spec.len() {
+            // Check for range pattern [a-z]
+            if i + 2 < spec.len() && spec[i + 1] == '-' {
+                let start = spec[i];
+                let end = spec[i + 2];
+                if ch >= start && ch <= end {
+                    matched = true;
+                    break;
+                }
+                i += 3;
+            } else {
+                if spec[i] == ch {
+                    matched = true;
+                    break;
+                }
+                i += 1;
+            }
+        }
+
+        if negated { !matched } else { matched }
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -520,7 +649,8 @@ fn main() {
         Err(e) => eprint!("Error: {}", e),
     }*/
     //let mut state = ShellState::new();
-    let mut shell_variables=  ShellVariable::new();
+    //let mut shell_variables=  ShellVariable::new();
+    let mut file_system = FileSystem::new();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -541,7 +671,7 @@ fn main() {
         
         let tokens = tokenize(&l).ok();
         
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
                 if idx + 2 <= token_arr.len() {
                     shell_variables.set(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
@@ -550,6 +680,16 @@ fn main() {
                 shell_variables.unset(token_arr[idx + 1].as_str());
             } else {
                 println!("{}", shell_variables.expand(&l).unwrap());
+            }
+        }*/
+
+        if let Some(token_arr) = tokens {
+            if let Some(idx) = token_arr.iter().position(|t| t == "FILE") {
+                file_system.create_file(token_arr[idx + 1].as_str());
+            } 
+                
+            if let Some(idx) = token_arr.iter().position(|t| t == "MATCH") {
+                println!("{}", file_system.match_filenames(token_arr[idx + 1].as_str()));
             }
         }
         

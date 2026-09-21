@@ -400,13 +400,16 @@ impl ShellVariable {
         }
 
         // Case 1: ${#X} length of X - 0 if it's unset
-        if let Some(var_name) = expr.as_str().strip_prefix('#') {
+        if expr.starts_with('#') {
+            let var_name = &expr[1..];
             let val = self.record.get(var_name).map(|v| v.as_str()).unwrap_or("");
             return Ok(val.len().to_string());
         }
 
         // Case 2: ${X:-d} Value of "X" or 'd' if unset/empty
-        if let Some((var_name, default_val)) = expr.as_str().split_once(":-") {
+        if let Some(pos) = expr.find(":-") {
+            let var_name = &expr[..pos];
+            let default_val = &expr[pos + 2..];
             let val = self.record.get(var_name).map(|v| v.as_str()).unwrap_or("");
             return if val.is_empty() {
                 Ok(default_val.to_string())

@@ -1,4 +1,4 @@
-use std::{io::{self, BufRead}};
+use std::{io::{self, BufRead}, thread::current};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {
@@ -17,6 +17,12 @@ pub struct Command {
 pub struct HereDocuments {
     pub command: String,
     pub body: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ShellState {
+    pub pwd: String,
+    pub oldpwd: Option<String>,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -275,6 +281,53 @@ pub fn parse_here_documents(lines: &[String]) -> Result<Vec<HereDocuments>, &'st
     Ok(results)
 }
 
+impl ShellState {
+    pub fn new() -> Self {
+        Self {
+            pwd: INITIAL_PWD.to_string(),
+            oldpwd: None,
+        }
+    }
+
+    pub fn cd(&mut self, target: Option<&str>) -> Result<String, &'static str> {
+        let destination = match target {
+            None | Some("") | Some("~") => INITIAL_PWD.to_string(),
+            Some("-") => match &self.oldpwd {
+                Some(old) => old.clone(),
+                None => return Err("cd: OLDPWD not set")
+            },
+            Some(path) => self.resolve_path(path),
+        };
+
+        self.oldpwd = Some(self.pwd.clone());
+        self.pwd = destination;
+
+        Ok(self.pwd.clone())
+    }
+
+    // Resolves virtual relative, '.', '..' paths
+    fn resolve_path(&self, raw_path: &str) -> String {
+        let absolute_path = if raw_path.starts_with('/') {
+            raw_path.to_string()
+        } else {
+            format!("{}/{}", self.pwd, raw_path)
+        };
+
+        let mut components = Vec::new();
+
+        for part in absolute_path.split('/') {
+            match part {
+                "" | "." => continue,
+                ".." => {
+                    components.pop();
+                }
+                segment => components.push(segment),
+            }
+        }
+        format!("/{}", components.join("/"))
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -326,11 +379,14 @@ pub fn parse_fd_with_op(token: &str) -> (i32, String) {
     }
 }
 
+// CONST DEFINITIONS
+const INITIAL_PWD: &str = "/home/user";
 
 fn main() {
     let stdin = io::stdin();
-
-    let lines: Vec<String> = match stdin.lock().lines().collect() {
+    
+    // HERE DOCS RUN
+    /*let lines: Vec<String> = match stdin.lock().lines().collect() {
         Ok(l) => l,
         Err(e) => {
             eprint!("Error reading stdin: {}", e);
@@ -350,11 +406,25 @@ fn main() {
             }
         },
         Err(e) => eprint!("Error: {}", e),
-    }    
-    /*for line in stdin.lock().lines() {
+    }*/
+    let mut state = ShellState::new();
+    for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
+        
+        let mut command_input = l.split_whitespace(); 
+        let command_name = command_input.next();
+        let command_ops = command_input.next();
 
+        match command_name {
+            Some("pwd") => println!("{}", state.pwd),
+            Some("cd") => match state.cd(command_ops) {
+                Ok(new_pwd) => println!("{}", new_pwd),
+                Err(e) => println!("{}", e),
+            },
+            _ => {}
+        }
+        
         //let tokens = tokenize(&l);
         
         /*match tokens {
@@ -406,5 +476,5 @@ fn main() {
             Err(e) => println!("{}", e),
         }*/
         
-    }*/
+    }
 }

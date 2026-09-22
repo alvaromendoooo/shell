@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, slice::SplitN};
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -830,6 +830,67 @@ pub fn parse_fd_with_op(token: &str) -> (i32, String) {
     }
 }
 
+// Helper of Pipeline I/O plan
+pub fn pipeline_plan(tokens: &[String]) -> String {
+
+    let mut cmds: Vec<String> = Vec::new();
+    let mut current_cmd: Vec<String> = Vec::new();
+
+    for token in tokens {
+        if token == "|" {
+            if !current_cmd.is_empty() {
+                cmds.push(current_cmd.join(" "));
+                current_cmd.clear();
+            }
+        } else {
+            current_cmd.push(token.clone());
+        }
+    }
+
+    if !current_cmd.is_empty() {
+        cmds.push(current_cmd.join(" "));
+    }
+    
+    let n = cmds.len();
+    if n == 0 {
+        return String::new();
+    }
+
+    let mut result = String::new();
+
+    for i in 0..n {
+        // Single command case without pipe
+        let mut command_parts = cmds[i].splitn(2, |c: char| c.is_whitespace());
+        let command = command_parts.next().unwrap_or("");
+        if n == 1 {
+            result.push_str(&format!("CMD {} {}", i, command));
+            break;
+        }
+
+        result.push_str(&format!("CMD {} {}\n", i, command));
+
+        // if i > 0, dup2 reads end (10 + 2(i-1)) to stdin (0)
+        if i > 0 {
+            let read_fd = 10 + 2 * (i - 1);
+            result.push_str(&format!("  DUP2 {} 0\n", read_fd));
+        }
+
+        // if i < n - 1 dup2 writes end (11 + 2 * (i - 1)) to stdout (1)
+        if i < n - 1 {
+            let write_fd = 11 + 2 * i;
+            result.push_str(&format!("  DUP2 {} 1\n", write_fd));
+        }
+
+        let total_fds = 2 * (n - 1);
+        for fd_offset in 0..total_fds {
+            let fd = 10 + fd_offset;
+            result.push_str(&format!("  CLOSE {}\n", fd));
+        }
+    }
+
+    result
+}
+
 // CONST DEFINITIONS
 const INITIAL_PWD: &str = "/home/user";
 
@@ -862,8 +923,8 @@ fn main() {
     //let mut shell_variables=  ShellVariable::new();
     //let mut file_system = FileSystem::new();
     //let mut command_substitution = CommandSubstitution::new();
-    let mut shell_events = ShellDrivenEvents::new();
-    let mut exit_code: Option<i32> = None;
+    //let mut shell_events = ShellDrivenEvents::new();
+    //let mut exit_code: Option<i32> = None;
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -918,7 +979,7 @@ fn main() {
             }
         }*/
         
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             match token_arr[0].as_str() {
                 "FORK" => {
                     if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
@@ -958,16 +1019,20 @@ fn main() {
                 },
                 _ => println!("ERR: not supported")
             }
+        }*/
+
+        if let Some(token_arr) = tokens {
+            println!("{}", pipeline_plan(&token_arr));
         }
-        
+
         /*match tokens {
-            Ok(tok) => {
-                let formatted_output: Vec<String> = tok
+            Some(tok) => {
+                /*let formatted_output: Vec<String> = tok
                     .into_iter()
                     .map(|t| format!("[{}]", t))
                     .collect();
 
-                println!("{}", formatted_output.join(" "));
+                println!("{}", formatted_output.join(" "));*/
 
                 // PARSER PIPELINES
                 //let pipeline_commands = parse_pipelines(&tok);
@@ -1006,7 +1071,7 @@ fn main() {
                     Err(e) => println!("{}", e),
                 }*/
             },
-            Err(e) => println!("{}", e),
+            None => println!("ERR: no tokens detected"),
         }*/
         
     }

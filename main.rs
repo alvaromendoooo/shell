@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, env::var, fs::File, io::{self, BufRead}, thread::current};
+use std::{collections::{HashMap, HashSet}, env::var, fs::File, io::{self, BufRead}, primitive, thread::current};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {
@@ -33,6 +33,11 @@ pub struct ShellVariable {
 #[derive(Debug)]
 pub struct FileSystem {
     pub files: HashSet<String>,
+}
+
+#[derive(Debug)]
+pub struct CommandSubstitution {
+    pub record: HashMap<String, String>,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -569,6 +574,130 @@ impl FileSystem {
     }
 }
 
+impl CommandSubstitution {
+    pub fn new() -> Self {
+        Self {
+            record: HashMap::new(),
+        }
+    }
+
+    pub fn create(&mut self, var_name: &str, var_value: &str) {
+        self.record.insert(var_name.to_string(), var_value.to_string());
+    }
+
+    pub fn expand(&self, line: &str) -> String {
+        // Strips EXPAND if present in input
+        let input = if line.starts_with("EXPAND ") {
+            &line["EXPAND ".len()..]
+        } else {
+            line
+        };
+        
+        let mut result = String::new();
+        let chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+
+
+        while i < chars.len() {
+            // Command substitution
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '(' {
+                i += 2; // Skip "$("
+
+                // Finding matching closing parenthesis
+                let start = i;
+                let mut depth = 1;
+                while i < chars.len() && depth > 0 {
+                    if chars[i] == '(' {
+                        depth += 1;
+                    } else if chars[i] == ')' {
+                        depth -= 1;
+                    }
+
+                    if depth > 0 {
+                        i += 1;
+                    }
+                }
+
+                let inner_cmd: String = chars[start..i].iter().collect();
+                if i < chars.len() && chars[i] == ')' {
+                    i += 1; // Consume ')'
+                }
+                // Recursion - Expand inside-out first in case the inside contains expandable variables
+                let expanded_inner = self.expand(&inner_cmd);
+
+                // Execute inside command
+                let cmd_output = self.execute_cmd(&expanded_inner);
+
+                result.push_str(cmd_output.trim_end_matches('\n'));
+                continue;
+            }
+
+            // Braces variables ${X}
+            if chars[i] == '$' && i + 1 < chars.len() && chars[i + 1] == '{' {
+                i += 2;
+                let start = i;
+                
+                while i < chars.len() && chars[i] != '}' {
+                    i += 1;
+                }
+
+                let var_name: String = chars[start..i].iter().collect();
+                if i <  chars.len() {
+                    i += 1; // skip '}'
+                }
+
+                let val = self.record.get(&var_name).cloned().unwrap_or_default();
+                result.push_str(&val);
+                continue;
+            }
+
+            // Literals variables
+            if chars[i] == '$' && i + 1 < chars.len() && (chars[i + 1].is_alphanumeric() || chars[i + 1] == '_') {
+                i += 1; // Skip '$'
+                let start = i;
+
+                while i < chars.len() && (chars[i].is_alphanumeric() || chars[i] == '_') {
+                    i += 1;
+                }
+
+                let var_name: String = chars[start..i].iter().collect();
+                let val = self.record.get(&var_name).cloned().unwrap_or_default();
+                result.push_str(&val);
+                continue;
+            }
+
+            result.push(chars[i]);
+            i += 1;
+        }
+        result
+    }
+
+    fn execute_cmd(&self, cmd: &str) -> String {
+        let trimmed = cmd.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+        let mut parts = trimmed.splitn(2, ' ');
+        let command_name = parts.next().unwrap_or("");
+        let args = parts.next().unwrap_or("");
+
+        match command_name {
+            "echo" => args.to_string(),
+            "upper" => args.to_uppercase(),
+            "len" => args.len().to_string(),
+            "cat" => {
+                // cat ${X} or $X -> expand the variable
+                if args.starts_with("$") {
+                    self.expand(args)
+                } else {
+                    self.record.get(args).cloned().unwrap_or_default()
+                }
+            }
+            _ => String::new()
+        }
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -650,7 +779,8 @@ fn main() {
     }*/
     //let mut state = ShellState::new();
     //let mut shell_variables=  ShellVariable::new();
-    let mut file_system = FileSystem::new();
+    //let mut file_system = FileSystem::new();
+    let mut command_substitution = CommandSubstitution::new();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -683,13 +813,25 @@ fn main() {
             }
         }*/
 
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             if let Some(idx) = token_arr.iter().position(|t| t == "FILE") {
                 file_system.create_file(token_arr[idx + 1].as_str());
             } 
                 
             if let Some(idx) = token_arr.iter().position(|t| t == "MATCH") {
                 println!("{}", file_system.match_filenames(token_arr[idx + 1].as_str()));
+            }
+        }*/
+
+        if let Some(token_arr) = tokens {
+            if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
+                if idx + 2 <= token_arr.len() {
+                    command_substitution.create(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
+                }
+            }
+
+            if let Some(_) = token_arr.iter().position(|t| t == "EXPAND") {
+                print!("{}", command_substitution.expand(&l));
             }
         }
         

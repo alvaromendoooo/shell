@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, process::exit, thread::sleep};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -712,12 +712,16 @@ impl ShellDrivenEvents {
         Self {
             parent_pid: 0,
             child_pid: 0,
-            execution: HashMap::from([
-                (0, "shell".to_string()),
-            ]),
-            status: HashMap::from([
-                (0, "running".to_string())
-            ]),
+            execution: {
+                let mut map = HashMap::new();
+                map.insert(0, "shell".to_string());
+                map
+            },
+            status: {
+                let mut map = HashMap::new();
+                map.insert(0, "running".to_string());
+                map
+            },
         }
     }
 

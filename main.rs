@@ -1,4 +1,5 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, process::exit, thread::sleep};
+use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {
@@ -38,6 +39,14 @@ pub struct FileSystem {
 #[derive(Debug)]
 pub struct CommandSubstitution {
     pub record: HashMap<String, String>,
+}
+
+#[derive(Debug)]
+pub struct ShellDrivenEvents {
+    pub parent_pid: i32,
+    pub child_pid: i32,
+    pub execution: HashMap<i32, String>,
+    pub status: HashMap<i32, String>,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -698,6 +707,74 @@ impl CommandSubstitution {
     }
 }
 
+impl ShellDrivenEvents {
+    pub fn new() -> Self {
+        Self {
+            parent_pid: 0,
+            child_pid: 0,
+            execution: HashMap::from([
+                (0, "shell".to_string()),
+            ]),
+            status: HashMap::from([
+                (0, "running".to_string())
+            ]),
+        }
+    }
+
+    pub fn fork(&mut self, parent_pid: i32, child_pid: i32) {
+        self.parent_pid = parent_pid;
+        self.child_pid = child_pid;
+        // Child init
+        self.execution.insert(child_pid, "shell".to_string());
+        self.status.insert(child_pid, "running".to_string());
+    }
+
+    pub fn exec(&mut self, pid: i32, program: &str) {
+        if self.execution.iter().find(|&(k, _)| *k == pid).is_some() {
+            self.execution.insert(pid, program.to_string());
+        }
+    }
+
+    pub fn exit(&mut self, pid: i32, code: i32) -> i32 {
+        if self.execution.iter().find(|&(k, _)| *k == pid).is_some() {
+            if let Some((_, status)) = self.status.iter().find(|&(k , _)| *k == pid) {
+                if status.as_str() == "running" {
+                    self.status.insert(pid, "zombie".to_string());
+                }
+            }
+        }
+
+        code
+    }
+
+    pub fn wait(&mut self, parent_pid: i32, child_pid: i32, exit_code: Option<i32>) -> Result<i32, &'static str> {
+        if self.parent_pid == parent_pid && self.child_pid == child_pid && 
+            self.status.get(&child_pid).map(|s| s.as_str()) != Some("reaped"){
+            match exit_code {
+                Some(code) => {
+                    self.status.insert(child_pid, "reaped".to_string());
+                    Ok(code)
+                },
+                None => Ok(-1)
+            }
+        } else {
+            Ok(-1)
+        }
+    }
+
+    pub fn status(&self, pid: i32) -> Result<String, &'static str> {
+        if let Some((_, pid_status)) = self.status.iter().find(|&(k, _)| *k == pid) {
+            if let Some((_, pid_program)) = self.execution.iter().find(|&(k, _)| *k == pid) {
+                Ok(format!("{} prog={}", pid_status, pid_program))
+            } else {
+                Err("ERR: pid={pid} doesn't have program registry")
+            }
+        } else {
+            Ok("unknown prog=?".to_string())
+        }
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -780,7 +857,9 @@ fn main() {
     //let mut state = ShellState::new();
     //let mut shell_variables=  ShellVariable::new();
     //let mut file_system = FileSystem::new();
-    let mut command_substitution = CommandSubstitution::new();
+    //let mut command_substitution = CommandSubstitution::new();
+    let mut shell_events = ShellDrivenEvents::new();
+    let mut exit_code: Option<i32> = None;
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -823,7 +902,7 @@ fn main() {
             }
         }*/
 
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
                 if idx + 2 <= token_arr.len() {
                     command_substitution.create(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
@@ -832,6 +911,48 @@ fn main() {
 
             if let Some(_) = token_arr.iter().position(|t| t == "EXPAND") {
                 print!("{}", command_substitution.expand(&l));
+            }
+        }*/
+        
+        if let Some(token_arr) = tokens {
+            match token_arr[0].as_str() {
+                "FORK" => {
+                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
+                        shell_events.fork(FromStr::from_str(token_arr[1].as_str()).unwrap(),
+                            FromStr::from_str(token_arr[2].as_str()).unwrap());
+                    }
+                },
+                "EXEC" => {
+                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
+                        shell_events.exec(FromStr::from_str(token_arr[1].as_str()).unwrap(),
+                            token_arr[2].as_str());
+                    }
+                },
+                "EXIT" => {
+                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
+                        exit_code = Some(shell_events.exit(FromStr::from_str(token_arr[1].as_str()).unwrap(), 
+                            FromStr::from_str(token_arr[2].as_str()).unwrap()));
+                    }
+                },
+                "WAIT" => {
+                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
+                        match shell_events.wait(FromStr::from_str(token_arr[1].as_str()).unwrap(), 
+                            FromStr::from_str(token_arr[2].as_str()).unwrap(), 
+                            exit_code) {
+                            Ok(code) => println!("{}", code),
+                            Err(e) => print!("{}", e)
+                        }
+                    }
+                },
+                "STATUS" => {
+                    if !token_arr[1].is_empty() {
+                        match shell_events.status(FromStr::from_str(token_arr[1].as_str()).unwrap()) {
+                            Ok(result) => println!("{}", result),
+                            Err(e) => eprint!("{}", e)
+                        }
+                    }
+                },
+                _ => println!("ERR: not supported")
             }
         }
         

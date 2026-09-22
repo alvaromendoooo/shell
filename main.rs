@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, slice::SplitN};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -891,6 +891,42 @@ pub fn pipeline_plan(tokens: &[String]) -> String {
     result
 }
 
+// Helper for Redirection plan
+pub fn redirection_plan(redirection_parser_str: String) -> String {
+    // Split input into parts delimited by is_whitespace
+    let mut split_redirection_parse = redirection_parser_str.
+        splitn(4, |c: char| c.is_whitespace());
+    let _ = split_redirection_parse.next().unwrap_or("");
+    let fd = &split_redirection_parse.next().unwrap_or("")["fd=".len()..]; // Skip 'fd='
+    let operator = &split_redirection_parse.next().unwrap_or("")["op=".len()..]; // Skip 'op='
+    // part
+    let target = &split_redirection_parse.next().unwrap_or("")["target=".len()..];
+    let mut result: String = String::new();
+
+    match operator {
+        ">" =>  {
+            if target == "&1" {
+                result.push_str(&format!("DUP2 1 {}", fd));
+            } else if target == "&2" {
+                result.push_str(&format!("DUP2 2 {}", fd));
+            } else {
+                result.
+                    push_str(&format!("OPEN {} WRONLY|CREAT|TRUNC -> fd 100\nDUP2 100 {}\nCLOSE 100",
+                        target, fd));
+            }
+        }
+        ">>" => result.
+                    push_str(&format!("OPEN {} WRONLY|CREAT|APPEND -> fd 100\nDUP2 100 {}\nCLOSE 100",
+                        target, fd)),
+        "<" => result.
+                push_str(&format!("OPEN {} RDONLY -> fd 100\nDUP2 100 {}\nCLOSE 100",
+                    target, fd)),
+        _ => { println!("ERR: not supported redirection operand for plan"); }
+    }
+
+    result
+}
+
 // CONST DEFINITIONS
 const INITIAL_PWD: &str = "/home/user";
 
@@ -1021,11 +1057,11 @@ fn main() {
             }
         }*/
 
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             println!("{}", pipeline_plan(&token_arr));
-        }
+        }*/
 
-        /*match tokens {
+        match tokens {
             Some(tok) => {
                 /*let formatted_output: Vec<String> = tok
                     .into_iter()
@@ -1050,13 +1086,13 @@ fn main() {
                 }*/
 
                 // PARSE REDIRECTIONS
-                /*let redirection_commands = parse_redirections(&tok);
+                let redirection_commands = parse_redirections(&tok);
 
                 match redirection_commands {
                     Ok(command) => {
-                        let argv_formatted = format!("[{}]", command.argv.join(", "));
+                        //let argv_formatted = format!("[{}]", command.argv.join(", "));
 
-                        println!("argv={}", argv_formatted);
+                        //println!("argv={}", argv_formatted);
 
                         for redir in command.redirections {
                             let formatted_redir = format!("redir fd={} op={} target={}", 
@@ -1065,14 +1101,14 @@ fn main() {
                                 redir.target
                             );
 
-                            println!("{}", formatted_redir);
+                            println!("{}", redirection_plan(formatted_redir));
                         }
                     },
                     Err(e) => println!("{}", e),
-                }*/
+                }
             },
             None => println!("ERR: no tokens detected"),
-        }*/
+        }
         
     }
 }

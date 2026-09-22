@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, env::var, fs::File, io::{self, BufRead}, primitive, thread::current};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Redirection {

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}};
+use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, slice::SplitN};
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -128,7 +128,13 @@ pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
                         tokens.push(std::mem::take(&mut current_token));
                         active_token = false;
                     }
-                    tokens.push("|".to_string());
+
+                    let mut or = c.to_string();
+                    if chars.peek() == Some(&'|') {
+                        or.push(chars.next().unwrap());
+                    }
+
+                    tokens.push(or);
                 }
                 _ if c.is_whitespace() => {
                     if active_token {
@@ -901,14 +907,13 @@ pub fn redirection_plan(redirection_parser_str: String) -> String {
     let operator = &split_redirection_parse.next().unwrap_or("")["op=".len()..]; // Skip 'op='
     // part
     let target = &split_redirection_parse.next().unwrap_or("")["target=".len()..];
+    println!("target={:?}", target);
     let mut result: String = String::new();
 
     match operator {
         ">" =>  {
             if target == "&1" {
                 result.push_str(&format!("DUP2 1 {}", fd));
-            } else if target == "&2" {
-                result.push_str(&format!("DUP2 2 {}", fd));
             } else {
                 result.
                     push_str(&format!("OPEN {} WRONLY|CREAT|TRUNC -> fd 100\nDUP2 100 {}\nCLOSE 100",
@@ -925,6 +930,56 @@ pub fn redirection_plan(redirection_parser_str: String) -> String {
     }
 
     result
+}
+
+pub fn parse_exit_code(cmd: &str) -> i32 {
+    if cmd.starts_with("OK") {
+        0
+    } else if cmd.starts_with("FAIL") {
+        let num_exit_fail = &cmd["FAIL".len()..];
+        num_exit_fail.parse::<i32>().unwrap_or(1)
+    } else {
+        0
+    }
+}
+
+pub fn logical_operands(tokens: &[String]) -> String {
+    let mut ran_cmds: Vec<&str> = Vec::new();
+    let mut current_exit =  0;
+    let mut should_run = false;
+
+    let mut i = 0;
+    while i < tokens.len() {
+        let token = &tokens[i];
+
+        if token == "&&" || token == "||"{
+            let op = token;
+            if i + 1 < tokens.len() {
+                let next_cmd = &tokens[i + 1];
+
+                // Check if we should run next_cmd based on operand 
+                if op == "&&" {
+                    should_run = current_exit == 0;
+                } else if op == "||" {
+                    should_run = current_exit != 0;
+                }
+
+                if should_run {
+                    current_exit = parse_exit_code(next_cmd);
+                    ran_cmds.push(next_cmd);
+                }
+            }
+
+            i += 2; // Move past operator + command
+        } else {
+            // Cmd previous to operands "&&" or "||" or even without contiguous operand
+            current_exit = parse_exit_code(token);
+            ran_cmds.push(token);
+            i += 1;
+        }
+    }
+
+    format!("RAN: {}\nEXIT: {}", ran_cmds.join(" "), current_exit)
 }
 
 // CONST DEFINITIONS
@@ -1086,7 +1141,7 @@ fn main() {
                 }*/
 
                 // PARSE REDIRECTIONS
-                let redirection_commands = parse_redirections(&tok);
+                /*let redirection_commands = parse_redirections(&tok);
 
                 match redirection_commands {
                     Ok(command) => {
@@ -1105,7 +1160,8 @@ fn main() {
                         }
                     },
                     Err(e) => println!("{}", e),
-                }
+                }*/
+                println!("{}", logical_operands(&tok));
             },
             None => println!("ERR: no tokens detected"),
         }

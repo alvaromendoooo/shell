@@ -49,6 +49,13 @@ pub struct ShellDrivenEvents {
     pub status: HashMap<i32, String>,
 }
 
+#[derive(Debug)]
+pub struct CommandSignal {
+    pub state: String,
+    pub fg_pid: i32,
+    pub record: HashMap<i32, String>,
+}
+
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut tokens = Vec::new();
     let mut current_token = String::new();
@@ -785,6 +792,75 @@ impl ShellDrivenEvents {
     }
 }
 
+impl CommandSignal {
+    pub fn new() -> Self {
+        Self {
+            state: "prompt".to_string(),
+            fg_pid: 0,
+            record: {
+                let mut map = HashMap::new();
+                map.insert(0, "prompt".to_string());
+                map
+            },
+        }
+    }
+    
+    pub fn start(&mut self, pid: i32) -> String {
+        self.state = "running".to_string();
+        self.fg_pid = pid;
+        self.record.insert(pid, "running".to_string());
+
+        format!("started {}", pid)
+    }
+
+    pub fn exit(&mut self, pid: i32) -> String {
+        if pid == self.fg_pid {
+            self.fg_pid = 0;
+            self.state = "prompt".to_string();
+            self.record.remove(&pid);
+        }
+
+        format!("done {}", pid)
+    }
+
+    pub fn sigint(&self) -> String {
+        let mut result: String = String::new();
+        if self.state == "prompt".to_string() {
+            result = "^C\nprompt".to_string();
+        } else if self.state == "running".to_string() {
+            if let Some((pid, _)) = self.record.iter().find(|(_, status)| status.as_str() == "running") {
+                result = format!("forwarded SIGINT to {}", pid);
+            }
+        }
+
+        result
+    }
+
+    pub fn sigtstp(&mut self) -> String {
+        let mut result = String::new();
+        if self.state == "running".to_string() {
+            self.state = "stopped".to_string();
+            self.record.insert(self.fg_pid, self.state.clone());
+            if let Some((pid, _)) = self.record.iter().find(|(_, status)| status.as_str() == "stopped") {
+                result = format!("stopped {}", pid);
+            }
+        } else if self.state == "prompt".to_string() {
+            result = "(no foreground job)".to_string();
+        }
+
+        result
+    }
+
+    pub fn sigterm(&self) -> String {
+        "shell exiting".to_string()
+    }
+
+    pub fn status(&self) -> String {
+        format!("state={} fg={}", self.state, self.fg_pid)
+    }
+
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -1016,6 +1092,7 @@ fn main() {
     //let mut command_substitution = CommandSubstitution::new();
     //let mut shell_events = ShellDrivenEvents::new();
     //let mut exit_code: Option<i32> = None;
+    let mut command_signals = CommandSignal::new();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -1112,11 +1189,36 @@ fn main() {
             }
         }*/
 
+        if let Some(token_arr) = tokens {
+            match token_arr[0].as_str() {
+                "START" => {
+                    if !token_arr[1].is_empty() {
+                        println!("{}", command_signals.start(FromStr::from_str(token_arr[1].as_str()).unwrap()));
+                    }
+                },
+                "EXIT" => {
+                    if !token_arr[1].is_empty() {
+                        println!("{}", command_signals.exit(FromStr::from_str(token_arr[1].as_str()).unwrap()));
+                    }
+                },
+                "SIGINT" => println!("{}", command_signals.sigint()),
+                "SIGTSTP" => println!("{}", command_signals.sigtstp()),
+                "SIGTERM" => {
+                    println!("{}", command_signals.sigterm());
+                    break;
+                },
+                "STATUS" => {
+                    println!("{}", command_signals.status());
+                }
+                _ => println!("ERR: not supported")
+            }
+        }
+
         /*if let Some(token_arr) = tokens {
             println!("{}", pipeline_plan(&token_arr));
         }*/
 
-        match tokens {
+        /*match tokens {
             Some(tok) => {
                 /*let formatted_output: Vec<String> = tok
                     .into_iter()
@@ -1164,7 +1266,7 @@ fn main() {
                 println!("{}", logical_operands(&tok));
             },
             None => println!("ERR: no tokens detected"),
-        }
+        }*/
         
     }
 }

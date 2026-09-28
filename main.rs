@@ -62,6 +62,24 @@ pub struct HistoryRegistry {
     pub iteration: i32,
 }
 
+#[derive(Debug, Clone)]
+pub struct Job {
+    pub jid: i32,
+    pub pid: i32,
+    pub name: String,
+    pub state: String,
+    pub fg: bool,
+}
+
+#[derive(Debug)]
+pub struct JobsManager {
+    pub next_jid: i32,
+    pub id_first_recent_job: i32,
+    pub id_second_recent_job: i32,
+    pub jobs_fr_record: Vec<Job>,
+    pub jobs_bg_record: Vec<Job>,
+}
+
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
     let mut tokens = Vec::new();
     let mut current_token = String::new();
@@ -949,6 +967,195 @@ impl HistoryRegistry {
     }
 }
 
+impl Job {
+    pub fn new(jid: i32, name: String, pid: i32, state: String, fg: bool) -> Self {
+        Self {
+            jid,
+            pid,
+            name,
+            state,
+            fg
+        }
+    }
+}
+
+impl JobsManager {
+    pub fn new() -> Self {
+        Self {
+            next_jid: 1,
+            id_first_recent_job: 0,
+            id_second_recent_job: 0,
+            jobs_fr_record: Vec::new(),
+            jobs_bg_record: Vec::new(),
+        }
+    }
+
+    /// Helper to update recency when a job is added, resumed, or touched.
+    fn touch_job(&mut self, jid: i32) {
+        if self.id_first_recent_job != jid {
+            self.id_second_recent_job = self.id_first_recent_job;
+            self.id_first_recent_job = jid;
+        }
+    }
+
+    pub fn process_job(&mut self, tokens: &[String]) -> Result<String, String> {
+        let mut result = String::new();
+        let mut iterator = tokens.iter().peekable();
+
+        while let Some(token) = iterator.next() {
+            match token.as_str() {
+                "BG" | "FG" => {
+                    // Check if an argument like %1 exists
+                    if let Some(&arg) = iterator.peek() {
+                        if arg.starts_with('%') {
+                            let arg = iterator.next().unwrap();
+                            let job_id = arg[1..].parse::<i32>().map_err(|_| "Invalid JID")?;
+
+                            if token == "BG" {
+                                // Resume job in background
+                                let mut found = false;
+                                // Check background records first (including stopped jobs)
+                                if let Some(pos) = self.jobs_bg_record.iter().position(|j| j.jid == job_id) {
+                                    self.jobs_bg_record[pos].state = "Running".to_string();
+                                    self.jobs_bg_record[pos].fg = false;
+                                    result.push_str(&format!("[{}] {} &", self.jobs_bg_record[pos].jid, self.jobs_bg_record[pos].name));
+                                    found = true;
+                                } else if let Some(pos) = self.jobs_fr_record.iter().position(|j| j.jid == job_id) {
+                                    let mut job = self.jobs_fr_record.remove(pos);
+                                    job.state = "Running".to_string();
+                                    job.fg = false;
+                                    result.push_str(&format!("[{}] {} &", job.jid, job.name));
+                                    self.jobs_bg_record.push(job);
+                                    found = true;
+                                }
+
+                                if !found {
+                                    return Err(format!("job %{} not found", job_id));
+                                }
+                            } else {
+                                // Resume/bring job to foreground
+                                let mut found_job = None;
+                                if let Some(pos) = self.jobs_bg_record.iter().position(|j| j.jid == job_id) {
+                                    let mut job = self.jobs_bg_record.remove(pos);
+                                    job.state = "Running".to_string();
+                                    job.fg = true;
+                                    result.push_str(&format!("[{}] {}", job.jid, job.name));
+                                    found_job = Some(job);
+                                } else if let Some(pos) = self.jobs_fr_record.iter().position(|j| j.jid == job_id) {
+                                    self.jobs_fr_record[pos].state = "Running".to_string();
+                                    self.jobs_fr_record[pos].fg = true;
+                                    result.push_str(&format!("[{}] {}", self.jobs_fr_record[pos].jid, self.jobs_fr_record[pos].name));
+                                }
+
+                                if let Some(job) = found_job {
+                                    self.jobs_fr_record.push(job);
+                                }
+                            }
+
+                            self.touch_job(job_id);
+                            continue;
+                        }
+                    }
+
+                    // Start a NEW job
+                    if let Some(name) = iterator.next() {
+                        let jid = self.next_jid;
+                        self.next_jid += 1;
+                        let pid = 1000 + jid;
+
+                        let is_bg = token == "BG";
+                        let job = Job {
+                            jid,
+                            pid,
+                            name: name.to_string(),
+                            state: "Running".to_string(),
+                            fg: !is_bg,
+                        };
+
+                        if is_bg {
+                            result.push_str(&format!("[{}] {}", jid, pid));
+                            self.jobs_bg_record.push(job);
+                        } else {
+                            result.push_str(&format!("[{}] {}\n{}", jid, pid, name));
+                            self.jobs_fr_record.push(job);
+                        }
+
+                        self.touch_job(jid);
+                    } else {
+                        return Err("Missing job name argument".to_string());
+                    }
+                }
+
+                "TSTP" => {
+                    if !self.jobs_fr_record.is_empty() {
+                        // Move foreground job to background as Stopped
+                        while let Some(mut job) = self.jobs_fr_record.pop() {
+                            job.state = "Stopped".to_string();
+                            job.fg = false;
+                            result.push_str(&format!("[{}]+ Stopped {}", job.jid, job.name));
+                            self.jobs_bg_record.push(job);
+                        }
+                    } else {
+                        result.push_str("(no foreground job)\n");
+                    }
+                }
+
+                "EXIT" => {
+                    if let Some(name) = iterator.next() {
+                        if let Some(pos) = self.jobs_fr_record.iter().position(|j| j.name == *name) {
+                            let job = self.jobs_fr_record.remove(pos);
+                            result.push_str(&format!("[{}]+ Done {}", job.jid, job.name));
+                        } else if let Some(pos) = self.jobs_bg_record.iter().position(|j| j.name == *name) {
+                            let job = self.jobs_bg_record.remove(pos);
+                            result.push_str(&format!("[{}]+ Done {}", job.jid, job.name));
+                        } else {
+                            return Err(format!("no matching job running for {}", name));
+                        }
+                    }
+                }
+
+                "JOBS" => {
+                    let mut combined_jobs: Vec<&Job> = self
+                        .jobs_fr_record
+                        .iter()
+                        .chain(self.jobs_bg_record.iter())
+                        .collect();
+
+                    combined_jobs.sort_by_key(|j| j.jid);
+
+                    let mut lines = Vec::new();
+                    for job in combined_jobs {
+                        let marker = if job.jid == self.id_first_recent_job {
+                            '+'
+                        } else if job.jid == self.id_second_recent_job {
+                            '-'
+                        } else {
+                            ' '
+                        };
+
+                        // Column layout: [<jid>]<marker><2 spaces><state padded to 23 chars><1 space><name>
+                        lines.push(format!(
+                            "[{}]{}  {:23} {}",
+                            job.jid, marker, job.state, job.name
+                        ));
+                    }
+
+                    if !lines.is_empty() {
+                        result.push_str(&lines.join("\n"));
+                        result.push('\n');
+                    }
+                }
+
+                _ => {
+                    return Err("not supported token for job handling".to_string());
+                }
+            }
+        }
+
+        Ok(result)
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -1157,6 +1364,7 @@ fn main() {
     let mut state = ShellState::new();
     let mut vars = ShellVariable::new();
     let mut history = HistoryRegistry::new();
+    let mut job = JobsManager::new();
 
     let mut setup_phase = true;
 
@@ -1210,7 +1418,7 @@ fn main() {
         }
 
         // Step 4: Variable Expansion ($VAR)
-        let mut expanded_tokens = Vec::new();
+        /*let mut expanded_tokens = Vec::new();
         for t in &tokens {
             if t.starts_with('$') {
                 let var_name = &t[1..];
@@ -1219,10 +1427,10 @@ fn main() {
             } else {
                 expanded_tokens.push(t.clone());
             }
-        }
+        }*/
 
         // Step 5: Built-in Command Evaluation
-        if expanded_tokens[0] == "set" {
+        /*if expanded_tokens[0] == "set" {
             // Handle `set NAME=VALUE`
             if expanded_tokens.len() >= 2 {
                 let arg = &expanded_tokens[1];
@@ -1307,6 +1515,12 @@ fn main() {
                 stdout_target,
                 is_piped
             );
+        }*/
+
+        // Job management
+        match job.process_job(&tokens) {
+            Ok(result) => println!("{}", result),
+            Err(e) => println!("{}", e)
         }
     }
 }

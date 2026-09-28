@@ -928,7 +928,7 @@ impl HistoryRegistry {
             ":hist" => {
                 let entries: Vec<(&i32, &String)> = self.history.iter().collect();
                 let total = entries.len();
-                for (idx, (&i, cmd)) in entries.iter().enumerate() {
+                for (idx, &(&i, cmd)) in entries.iter().enumerate() {
                     if idx == total - 1 {
                         result.push_str(&format!("{}: {}", i, cmd));
                     } else {
@@ -1151,219 +1151,162 @@ const INITIAL_PWD: &str = "/home/user";
 
 fn main() {
     let stdin = io::stdin();
-    
-    // HERE DOCS RUN
-    /*let lines: Vec<String> = match stdin.lock().lines().collect() {
-        Ok(l) => l,
-        Err(e) => {
-            eprint!("Error reading stdin: {}", e);
-            return;
-        }
-    };
+    let mut lines = stdin.lock().lines();
 
-    match parse_here_documents(&lines) {
-        Ok(here_docs) => {
-            for here_doc in here_docs {
-                println!("CMD {}", here_doc.command);
-                if let Some(body) = here_doc.body {
-                    println!("BODY:\n{}\nEND", body);
+    let mut fs = FileSystem::new();
+    let mut state = ShellState::new();
+    let mut vars = ShellVariable::new();
+    let mut history = HistoryRegistry::new();
+
+    let mut setup_phase = true;
+
+    while let Some(Ok(line)) = lines.next() {
+        let trimmed = line.trim();
+
+        // Step 1: Handle Setup Phase (FILE lines until a blank line)
+        if setup_phase {
+            if trimmed.is_empty() {
+                setup_phase = false;
+                continue;
+            }
+            if trimmed.starts_with("FILE ") {
+                let filename = trimmed["FILE ".len()..].trim();
+                fs.create_file(filename);
+                continue;
+            }
+        }
+
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // Step 2: History Expansion (!N, !!)
+        let expanded_cmd = match history.register_commands(trimmed.to_string()) {
+            Ok(expanded) => {
+                // Strips 'RAN ' prefix if returned by history registry
+                if expanded.starts_with("RAN ") {
+                    expanded["RAN ".len()..].to_string()
                 } else {
-                    println!("BODY:\nEND");
+                    expanded
                 }
             }
-        },
-        Err(e) => eprint!("Error: {}", e),
-    }*/
-    //let mut state = ShellState::new();
-    //let mut shell_variables=  ShellVariable::new();
-    //let mut file_system = FileSystem::new();
-    //let mut command_substitution = CommandSubstitution::new();
-    //let mut shell_events = ShellDrivenEvents::new();
-    //let mut exit_code: Option<i32> = None;
-    //let mut command_signals = CommandSignal::new();
-    let mut history_command = HistoryRegistry::new();
-    for line in stdin.lock().lines() {
-        let l = line.unwrap();
-        if l.is_empty() { continue; }
-       
-        // PWD - CD command
-        /*let mut command_input = l.split_whitespace(); 
-        let command_name = command_input.next();
-        let command_ops = command_input.next();
+            Err(e) => {
+                println!("ERR {}", e);
+                continue;
+            }
+        };
 
-        match command_name {
-            Some("pwd") => println!("{}", state.pwd),
-            Some("cd") => match state.cd(command_ops) {
-                Ok(new_pwd) => println!("{}", new_pwd),
-                Err(e) => println!("{}", e),
-            },
-            _ => {}
-        }*/
-        
-        let tokens = tokenize(&l).ok();
-        
-        /*if let Some(token_arr) = tokens {
-            if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
-                if idx + 2 <= token_arr.len() {
-                    shell_variables.set(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
-                }
-            } else if let Some(idx) = token_arr.iter().position(|t| t == "UNSET") {
-                shell_variables.unset(token_arr[idx + 1].as_str());
+        // Step 3: Tokenization
+        let tokens = match tokenize(&expanded_cmd) {
+            Ok(t) => t,
+            Err(e) => {
+                println!("{}", e);
+                continue;
+            }
+        };
+
+        if tokens.is_empty() {
+            continue;
+        }
+
+        // Step 4: Variable Expansion ($VAR)
+        let mut expanded_tokens = Vec::new();
+        for t in &tokens {
+            if t.starts_with('$') {
+                let var_name = &t[1..];
+                let val = vars.record.get(var_name).cloned().unwrap_or_default();
+                expanded_tokens.push(val);
             } else {
-                println!("{}", shell_variables.expand(&l).unwrap());
-            }
-        }*/
-
-        /*if let Some(token_arr) = tokens {
-            if let Some(idx) = token_arr.iter().position(|t| t == "FILE") {
-                file_system.create_file(token_arr[idx + 1].as_str());
-            } 
-                
-            if let Some(idx) = token_arr.iter().position(|t| t == "MATCH") {
-                println!("{}", file_system.match_filenames(token_arr[idx + 1].as_str()));
-            }
-        }*/
-
-        /*if let Some(token_arr) = tokens {
-            if let Some(idx) = token_arr.iter().position(|t| t == "SET") {
-                if idx + 2 <= token_arr.len() {
-                    command_substitution.create(token_arr[idx + 1].as_str(), token_arr[idx + 2].as_str());
-                }
-            }
-
-            if let Some(_) = token_arr.iter().position(|t| t == "EXPAND") {
-                print!("{}", command_substitution.expand(&l));
-            }
-        }*/
-        
-        /*if let Some(token_arr) = tokens {
-            match token_arr[0].as_str() {
-                "FORK" => {
-                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
-                        shell_events.fork(FromStr::from_str(token_arr[1].as_str()).unwrap(),
-                            FromStr::from_str(token_arr[2].as_str()).unwrap());
-                    }
-                },
-                "EXEC" => {
-                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
-                        shell_events.exec(FromStr::from_str(token_arr[1].as_str()).unwrap(),
-                            token_arr[2].as_str());
-                    }
-                },
-                "EXIT" => {
-                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
-                        exit_code = Some(shell_events.exit(FromStr::from_str(token_arr[1].as_str()).unwrap(), 
-                            FromStr::from_str(token_arr[2].as_str()).unwrap()));
-                    }
-                },
-                "WAIT" => {
-                    if !token_arr[1].is_empty() && !token_arr[2].is_empty() {
-                        match shell_events.wait(FromStr::from_str(token_arr[1].as_str()).unwrap(), 
-                            FromStr::from_str(token_arr[2].as_str()).unwrap(), 
-                            exit_code) {
-                            Ok(code) => println!("{}", code),
-                            Err(e) => print!("{}", e)
-                        }
-                    }
-                },
-                "STATUS" => {
-                    if !token_arr[1].is_empty() {
-                        match shell_events.status(FromStr::from_str(token_arr[1].as_str()).unwrap()) {
-                            Ok(result) => println!("{}", result),
-                            Err(e) => eprint!("{}", e)
-                        }
-                    }
-                },
-                _ => println!("ERR: not supported")
-            }
-        }*/
-
-        /*if let Some(token_arr) = tokens {
-            match token_arr[0].as_str() {
-                "START" => {
-                    if !token_arr[1].is_empty() {
-                        println!("{}", command_signals.start(FromStr::from_str(token_arr[1].as_str()).unwrap()));
-                    }
-                },
-                "EXIT" => {
-                    if !token_arr[1].is_empty() {
-                        println!("{}", command_signals.exit(FromStr::from_str(token_arr[1].as_str()).unwrap()));
-                    }
-                },
-                "SIGINT" => println!("{}", command_signals.sigint()),
-                "SIGTSTP" => println!("{}", command_signals.sigtstp()),
-                "SIGTERM" => {
-                    println!("{}", command_signals.sigterm());
-                    break;
-                },
-                "STATUS" => {
-                    println!("{}", command_signals.status());
-                }
-                _ => println!("ERR: not supported")
-            }
-        }*/
-
-        /*if let Some(token_arr) = tokens {
-            println!("{}", pipeline_plan(&token_arr));
-        }*/
-
-        if let Some(token_arr) = tokens {
-            let results = history_command.register_commands(token_arr.join(" "));
-            match results {
-                Ok(result) => println!("{}", result),
-                Err(e) => println!("{}", e),
+                expanded_tokens.push(t.clone());
             }
         }
 
-        /*match tokens {
-            Some(tok) => {
-                let formatted_output: Vec<String> = tok.clone()
-                    .into_iter()
-                    .map(|t| format!("[{}]", t))
-                    .collect();
+        // Step 5: Built-in Command Evaluation
+        if expanded_tokens[0] == "set" {
+            // Handle `set NAME=VALUE`
+            if expanded_tokens.len() >= 2 {
+                let arg = &expanded_tokens[1];
+                if let Some(eq_idx) = arg.find('=') {
+                    let name = &arg[..eq_idx];
+                    let val = &arg[eq_idx + 1..];
+                    vars.set(name, val);
+                }
+            }
+            continue;
+        } else if expanded_tokens[0] == "cd" {
+            let target = expanded_tokens.get(1).map(|s| s.as_str());
+            match state.cd(target) {
+                Ok(_) => continue,
+                Err(e) => println!("ERR {}", e),
+            }
+            continue;
+        } else if expanded_tokens[0] == "pwd" {
+            println!("{}", state.pwd);
+            continue;
+        } else if expanded_tokens[0] == "echo" {
+                let mut echo_args = Vec::new();
+                let mut iter = expanded_tokens[1..].iter().peekable();
+                
+                while let Some(tok) = iter.next() {
+                    if tok == ">" || tok == ">>" || tok == "<" {
+                        // Skip the redirection token and its target argument
+                        let _ = iter.next();
+                    } else {
+                        echo_args.push(tok.as_str());
+                    }
+                }
+                
+                println!("{}", echo_args.join(" "));
+                continue;
+        } else if expanded_tokens[0] == "exit" {
+                    break;
+                }
 
-                println!("{}", formatted_output.join(" "));
+        // Step 6: Parse Pipeline Stages
+        let pipeline_stages = match parse_pipelines(&expanded_tokens) {
+            Ok(stages) => stages,
+            Err(e) => {
+                println!("{}", e);
+                continue;
+            }
+        };
 
-                // PARSER PIPELINES
-                //let pipeline_commands = parse_pipelines(&tok);
+        let num_stages = pipeline_stages.len();
 
-                /*match pipeline_commands {
-                    Ok(list_commands) => {
-                        let formatted_pipeline = list_commands
-                            .into_iter()
-                            .map(|p| p.join(" "))
-                            .collect::<Vec<String>>()
-                            .join(" | ");
-                        println!("{}", formatted_pipeline);
-                    },
-                    Err(e) => println!("{}", e),
-                }*/
+        // Step 7: Process Each Pipeline Stage & Print OK Plan
+        for (i, stage_tokens) in pipeline_stages.iter().enumerate() {
+            let is_piped = i < num_stages - 1;
 
-                // PARSE REDIRECTIONS
-                /*let redirection_commands = parse_redirections(&tok);
+            let mut stdout_target = "-".to_string();
+            let mut stage_argv = Vec::new();
 
-                match redirection_commands {
-                    Ok(command) => {
-                        //let argv_formatted = format!("[{}]", command.argv.join(", "));
-
-                        //println!("argv={}", argv_formatted);
-
-                        for redir in command.redirections {
-                            let formatted_redir = format!("redir fd={} op={} target={}", 
-                                redir.fd, 
-                                redir.operand, 
-                                redir.target
-                            );
-
-                            println!("{}", redirection_plan(formatted_redir));
+            let mut iter = stage_tokens.iter().peekable();
+            while let Some(tok) = iter.next() {
+                if tok == ">" || tok == ">>" {
+                    if let Some(target) = iter.next() {
+                        stdout_target = target.clone();
+                    }
+                } else if tok == "<" {
+                    let _ = iter.next(); // Consume target for input redirection
+                } else {
+                    // Glob Expansion against FileSystem
+                    if tok.contains('*') || tok.contains('?') || tok.contains('[') {
+                        let matched = fs.match_filenames(tok);
+                        for file in matched.split_whitespace() {
+                            stage_argv.push(file.to_string());
                         }
-                    },
-                    Err(e) => println!("{}", e),
-                }*/
-                //println!("{}", logical_operands(&tok));
-            },
-            None => println!("ERR: no tokens detected"),
-        }*/
-        
+                    } else {
+                        stage_argv.push(tok.clone());
+                    }
+                }
+            }
+
+            println!(
+                "OK [{}] stdout={} pipe={}",
+                stage_argv.join(", "),
+                stdout_target,
+                is_piped
+            );
+        }
     }
 }

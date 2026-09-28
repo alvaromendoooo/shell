@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, io::{self, BufRead}, slice::SplitN};
+use std::{clone, cmp::max_by_key, collections::{BTreeMap, HashMap, HashSet}, hash::Hash, io::{self, BufRead}, slice::SplitN};
 use std::str::FromStr;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -54,6 +54,12 @@ pub struct CommandSignal {
     pub state: String,
     pub fg_pid: i32,
     pub record: HashMap<i32, String>,
+}
+
+#[derive(Debug)]
+pub struct HistoryRegistry {
+    pub history: BTreeMap<i32, String>,
+    pub iteration: i32,
 }
 
 pub fn tokenize(input: &str) -> Result<Vec<String>, &'static str> {
@@ -861,6 +867,88 @@ impl CommandSignal {
 
 }
 
+impl HistoryRegistry {
+    pub fn new() -> Self {
+        Self {
+            history: BTreeMap::new(),
+            iteration: 0
+        }
+    }
+
+    pub fn register_commands(&mut self, command: String) -> Result<String, String> {
+        let mut result = String::new();
+        
+        match command.as_str() {
+
+            _ if command == "!!" || command.starts_with("!!") => {
+                if let Some(last_command) = self.history.get(&self.iteration).cloned() {
+                    self.iteration += 1;
+                    self.history.insert(self.iteration, last_command.clone());
+                    result.push_str(&format!("RAN {}", last_command));
+                } else {
+                    return Err("No command was previously runned".to_string());
+                }
+            },
+
+            _ if command.starts_with('!')
+                && command[1..].trim().parse::<i32>().is_ok() => {
+                
+                let num: i32 = command[1..].trim().parse().unwrap();
+                
+                if let Some(cmd) = self.history.get(&num).cloned() {
+                    self.iteration += 1;
+                    self.history.insert(self.iteration, cmd.clone());
+                    result.push_str(&format!("RAN {}", cmd)); 
+                } else {
+                    return Err(format!("bash: !{}: event not found", num));
+                }
+            },
+
+            _ if command.starts_with('!') && command != "!!" => {
+                let target = command[1..].trim();
+
+                if target.is_empty() {
+                    return Err("bash: !: event not found".to_string());
+                }
+
+                let cmd_match = self.history
+                    .iter()
+                    .find(|(_, cmd)| cmd.starts_with(target))
+                    .map(|(_, cmd)| cmd.clone());
+
+                if let Some(cmd_str) = cmd_match {
+                    self.iteration += 1;
+                    self.history.insert(self.iteration, cmd_str.clone());
+                    result.push_str(&format!("RAN {}", cmd_str));
+                } else {
+                    return Err(format!("bash: {}: event not found", command));
+                }
+            },
+
+            ":hist" => {
+                let entries: Vec<(&i32, &String)> = self.history.iter().collect();
+                let total = entries.len();
+                for (idx, (&i, cmd)) in entries.iter().enumerate() {
+                    if idx == total - 1 {
+                        result.push_str(&format!("{}: {}", i, cmd));
+                    } else {
+                        result.push_str(&format!("{}: {}\n", i, cmd));
+                    }
+                } 
+            },
+
+            _ => {
+                self.iteration += 1;
+                self.history.insert(self.iteration, command.clone());
+                result.push_str(&format!("RAN {}", command));
+            }
+
+        }
+        
+        Ok(result)
+    }
+}
+
 // Helper that identifies if a line is a heredoc command, if it is, returns its index + if it will
 // be tabbed
 pub fn find_heredoc_operator(tokens: &[String]) -> Option<(usize, bool)> {
@@ -1092,7 +1180,8 @@ fn main() {
     //let mut command_substitution = CommandSubstitution::new();
     //let mut shell_events = ShellDrivenEvents::new();
     //let mut exit_code: Option<i32> = None;
-    let mut command_signals = CommandSignal::new();
+    //let mut command_signals = CommandSignal::new();
+    let mut history_command = HistoryRegistry::new();
     for line in stdin.lock().lines() {
         let l = line.unwrap();
         if l.is_empty() { continue; }
@@ -1189,7 +1278,7 @@ fn main() {
             }
         }*/
 
-        if let Some(token_arr) = tokens {
+        /*if let Some(token_arr) = tokens {
             match token_arr[0].as_str() {
                 "START" => {
                     if !token_arr[1].is_empty() {
@@ -1212,20 +1301,28 @@ fn main() {
                 }
                 _ => println!("ERR: not supported")
             }
-        }
+        }*/
 
         /*if let Some(token_arr) = tokens {
             println!("{}", pipeline_plan(&token_arr));
         }*/
 
+        if let Some(token_arr) = tokens {
+            let results = history_command.register_commands(token_arr.join(" "));
+            match results {
+                Ok(result) => println!("{}", result),
+                Err(e) => println!("{}", e),
+            }
+        }
+
         /*match tokens {
             Some(tok) => {
-                /*let formatted_output: Vec<String> = tok
+                let formatted_output: Vec<String> = tok.clone()
                     .into_iter()
                     .map(|t| format!("[{}]", t))
                     .collect();
 
-                println!("{}", formatted_output.join(" "));*/
+                println!("{}", formatted_output.join(" "));
 
                 // PARSER PIPELINES
                 //let pipeline_commands = parse_pipelines(&tok);
@@ -1263,7 +1360,7 @@ fn main() {
                     },
                     Err(e) => println!("{}", e),
                 }*/
-                println!("{}", logical_operands(&tok));
+                //println!("{}", logical_operands(&tok));
             },
             None => println!("ERR: no tokens detected"),
         }*/
